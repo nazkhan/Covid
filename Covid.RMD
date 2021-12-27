@@ -1,0 +1,162 @@
+---
+params: 
+  prjName: "State Name"
+title: "COVID-19 Case and Death Rates"
+subtitle: "State of `r params$prjName`"
+output: 
+  word_document:
+    reference_docx: "Templates/Word-Template-00.docx"
+date: "`r paste('As of:',Sys.Date())`"
+---
+
+```{r input, include=FALSE}
+readname = function()# Get the project name
+{
+  params$prjName
+}
+prjName=readname()
+```
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(flextable)
+library(officer)
+library(janitor)
+library(Rcpp)
+
+covid<-read.csv("Input_Data/covid.csv")
+
+wa_pop<-read.csv("Input_Data/WA Population.csv",fileEncoding = 'UTF-8-BOM')
+wa_pop<-wa_pop %>%
+  rowwise() %>%
+  mutate(Pop2020=as.numeric(gsub(",","",Pop2020)),Pop2021=as.numeric(gsub(",","",Pop2021))) %>%
+  mutate(Population=round(mean(c(Pop2020,Pop2021)),digits = 0)) %>%
+  select(-Pop2020,-Pop2021)  
+
+wa_covid<-covid %>% filter(state=="Washington" & county != "Unknown") %>%
+   mutate(Date=as.Date(date), FIPS=gsub("USA-","",geoid)) %>%
+   rename(State=state, County=county, Cases=cases, Deaths=deaths, `Avg Cases`=cases_avg, `Avg Cases/100K`=cases_avg_per_100k, `Avg Deaths`=deaths_avg,
+          `Avg Deaths/100K`=deaths_avg_per_100k) %>%
+   select(Date, FIPS, everything(), -X, -date, -geoid)
+
+wa_covid_cum<-wa_covid %>%
+  group_by(County) %>%
+  summarise(Cases=sum(Cases), Deaths=sum(Deaths)) %>%
+  left_join(wa_pop, by=c("County"="County")) %>%
+  adorn_totals("row",name="Total") %>%
+  mutate(`Cases/100K`=round(Cases/Population*100000,digits = 0), `Deaths/100K`=round(Deaths/Population*100000,digits = 0))
+
+```
+
+# Introduction 
+
+* Data for this report are Collected from [Newyork Times on Github](https://github.com/nytimes) 
+  + The primary data published here are the daily number of cases and deaths reported in each county of Washington State since the beginning of the pandemic
+* This time series data is compiled from state and local governments and health departments in an attempt to provide a complete view of the ongoing outbreak 
+  + Because of the widespread shortage of testing, however, the data is necessarily limited in the picture it presents of the outbreak 
+
+# Table-1: Cases and Deaths
+
+```{r countyTable, ft.align='left', echo=FALSE, warning=FALSE, message=FALSE}
+
+border_h<-fp_border(color = "grey")
+border_v<-fp_border(color = "grey")
+
+flextable(wa_covid_cum, theme_fun = theme_booktabs) %>%
+  autofit() %>%
+  border_inner_h(part = "all", border = border_h) %>%
+  border_inner_v(part = "all", border = border_v) %>%
+  bold(bold = TRUE, part = "header") %>%
+  hline(i=nrow(wa_covid_cum)-1, border = fp_border(color="grey35", width=2))
+  
+```
+
+## Fig-1: Cumulative Cases by County
+
+```{r countyCases, results='hide', echo=FALSE, message=FALSE, warning=FALSE, fig.align='left', fig.width=15, fig.height=10}
+###############################
+#             fig-1           #
+#           Cases Bar         #
+###############################
+
+ymax1 <- max(subset(wa_covid_cum,County!="Total")$Cases,na.rm = T) +10000
+
+ggplot(wa_covid_cum %>% filter(County !="Total"), aes(x=reorder(County, -Cases), y=Cases)) +
+  geom_bar(stat="identity",  fill="steelblue", width = 0.6) +
+  geom_text(aes(label=Cases), vjust=0, hjust=-.5, parse=T, angle = 90) +
+  theme_classic()+
+  theme(text=element_text(size=15))+
+  scale_y_continuous(limits = c(0, ymax1), breaks = seq(0, ymax1, by = 10000)) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("County") +
+  ylab("Cumulative Cases") 
+
+```
+
+## Fig-2: Cumulative Deaths by County
+
+```{r countyDeaths, results='hide', echo=FALSE, message=FALSE, warning=FALSE, fig.align='left', fig.width=15, fig.height=10}
+###############################
+#             fig-2           #
+#          Deaths Bar         #
+###############################
+
+ymax1 <- max(subset(wa_covid_cum,County!="Total")$Deaths,na.rm = T) +50
+
+ggplot(wa_covid_cum %>% filter(County !="Total"), aes(x=reorder(County, -Deaths), y=Deaths)) +
+  geom_bar(stat="identity",  fill="steelblue", width = 0.6) +
+  geom_text(aes(label=Deaths), vjust=0, hjust=-.5, parse=T, angle = 90) +
+  theme_classic()+
+  theme(text=element_text(size=15))+
+  scale_y_continuous(limits = c(0, ymax1), breaks = seq(0, ymax1, by = 100)) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("County") +
+  ylab("Cumulative Deaths") 
+
+```
+
+## Fig-3: Cumulative Cases Rate per 100,000 Population by County
+
+```{r countyCasesRate, results='hide', echo=FALSE, message=FALSE, warning=FALSE, fig.align='left', fig.width=15, fig.height=10}
+###############################
+#             fig-3           #
+#         Case Rate Bar       #
+###############################
+
+ymax1 <- max(subset(wa_covid_cum,County!="Total")$`Cases/100K`,na.rm = T) +1000
+
+ggplot(wa_covid_cum %>% filter(County !="Total"), aes(x=reorder(County, -`Cases/100K`), y=`Cases/100K`)) +
+  geom_bar(stat="identity",  fill="steelblue", width = 0.6) +
+  geom_text(aes(label=`Cases/100K`), vjust=0, hjust=-.5, parse=T, angle = 90) +
+  theme_classic()+
+  theme(text=element_text(size=15))+
+  scale_y_continuous(limits = c(0, ymax1), breaks = seq(0, ymax1, by = 1000)) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("County") +
+  ylab("Cumulative Cases/100K Population") 
+
+```
+
+## Fig-4: Cumulative Cases Rate per 100,000 Population by County
+
+```{r countyDeathRate, results='hide', echo=FALSE, message=FALSE, warning=FALSE, fig.align='left', fig.width=15, fig.height=10}
+###############################
+#             fig-4           #
+#         Death Rate Bar      #
+###############################
+
+ymax1 <- max(subset(wa_covid_cum,County!="Total")$`Deaths/100K`,na.rm = T) +10
+
+ggplot(wa_covid_cum %>% filter(County !="Total"), aes(x=reorder(County, -`Deaths/100K`), y=`Deaths/100K`)) +
+  geom_bar(stat="identity",  fill="steelblue", width = 0.6) +
+  geom_text(aes(label=`Deaths/100K`), vjust=0, hjust=-.5, parse=T, angle = 90) +
+  theme_classic()+
+  theme(text=element_text(size=15))+
+  scale_y_continuous(limits = c(0, ymax1), breaks = seq(0, ymax1, by = 10)) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  xlab("County") +
+  ylab("Cumulative Deaths/100K Population") 
+
+```
